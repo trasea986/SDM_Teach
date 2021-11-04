@@ -1,0 +1,165 @@
+---
+title: "R_Assignment_2"
+author: "Travis Seaborn"
+date: "version 2/3/2021"
+output: 
+  html_document: 
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Visualization in R
+
+### Loading packages and data
+
+For plotting in this exercise, we will be using GGPlot2. This is actually a package that is part of the tidyverse suite of packages, so we will just load tidyverse. As the semester goes on we will talk about plotting with other options for maps. We will also load the gbif package from last week, and a new GIS package "dismo". Dismo has a lot of the tools we will need for distribution models in R.
+
+**Before running library functions below, run "install.packages("dismo") and install it, along with any of its dependencies you may not have**
+
+```{r packages}
+library(tidyverse)
+library(maptools)
+library(rgbif)
+library(dismo)
+```
+
+**Again, warnings are okay for loading packages. My warnings are usually due to version differences. Errors are more problematic, and if you can't load the packages please email me.**
+
+Next, we will load in the data from last time, and do the same clean up steps. See assignment one for more detail on these steps. We go from downloading the data from gbif, to creating a data frame that just has the species name, and latitude and longitude.
+
+I did make **two changes in the code from last week**. Sometimes you may have multiple functions with the same name coming from different packages. You can tell R the specific package you want the function from by adding **"package::function"**. Below you can see an example of this with "dplyr::select(". I actually had to do this, because even though the code last week was working for me fine, it stopped working this week for no apparent reason. I figured out this solution with a Google search of the error message.
+
+The second change was using "filter" to remove any rows missing a latitude or longitude value.
+
+```{r occ data}
+species <- occ_search(scientificName= "Oncorhynchus tshawytscha", country="US", limit=1000)
+
+species_df <- as.data.frame(species$data)
+
+species_loc <- species_df %>%
+  dplyr::select(species, decimalLatitude, decimalLongitude) %>%
+  filter(!is.na(decimalLatitude)) %>%
+  filter(!is.na(decimalLongitude))
+
+```
+
+The last piece of data we need to download for this assignment is some climate data. This wasn't covered in the lecture, but is pretty straightforward.
+
+We use the function getData from the dismo package.
+
+For arguments we have:
+1) the type of data we want. we are going to use the worldclim data
+2) the variables we want. we are going to download the "bioclim" variables (more on those next week, but you can see what they are here: https://www.worldclim.com/bioclim)
+3) the resolution of the spatial data. we will talk about resolution more next week, but if you have a slow internet connection, you can change the following code from 2.5 to 5 in the res argument. 2.5 comes in at 123.3 MB.
+
+```{r climate data}
+worldclim <- getData("worldclim", var="bio", res=2.5)
+```
+
+This is a "RasterStack" meaning that it is multiple GIS layers grouped together. We can do a simple map using the base R "plot" function of one of these layers. We will focus on **Bio1**, which is the mean annual temperature. We use the "$" to pick one piece of an object with lots of pieces. Note that the units from Bioclim are in 1/10 degree Celsius.
+
+```{r bio1 plot}
+plot(worldclim$bio1)
+```
+
+
+### Looking at the climate where we know the species is located
+
+We  need to do a few more new things. Each step, except 3, is one line of code.
+
+1) Remove the species name, because "extract" anc "coordinates" are only expecting the x and y coordinates. We use NULL to delete the column. It can also be used for a whole object.
+
+2) tell R this object is a list of GIS data points.
+
+3) extract, using the extract from the raster package. We first point to the raster, and then the location points.
+
+We are going to switch from Bio 1, to 8 and 9. 8: Mean temperature wettest quarter and 9: mean temperature driest quarter.
+
+4) instead of having a spatialpoints file (which is what "coordinates" did) we are going to go back to a data frame.
+
+```{extract code}
+species_loc$species <- NULL
+
+coordinates(species_loc) <- ~decimalLongitude+decimalLatitude
+
+species_loc$temperature_wet <- raster::extract(worldclim$bio8, species_loc)
+species_loc$temperature_dry <- raster::extract(worldclim$bio9, species_loc)
+
+species_loc_df <- as.data.frame(species_loc)
+```
+
+### Almost there: let's make some plots!
+
+Now we have a data frame with two environmental variables for our points! So, the last thing we want to do is visualize this.
+
+There are a couple of things you might be interested, first would be the histogram of the values. The second is a box plot of the median values and the distribution of the points.
+
+First, we need to put the temperature columns "on top" of each other. To use groups, ggplot2 needs the group of interest to be in a single column. We can do this with "gather" to make what is called Tall format. We will talk more about tall and wide formats later. There are also amazing guides online, including tinyurl.com/1tsg0owq (see section on gather and spread).
+
+This uses pipes again, so line
+1) create the new object, by taking the last object and pipe (%>%)
+2) gather, which uses the pattern ("what the category name is going to be", "What the number associated with the group is", "which columns do I want?")
+
+
+```{tall format}
+species_loc_df <- species_loc_df %>%
+  tidyr::gather("Quarter", "Temperature", 1:2)
+```
+
+You might not always want or need intermediate objects. We could have likely replaced "species_loc_df" with the tall format. However, I always worry I am going to mess up "gather". Even for this lesson, I did a quick Google to make sure I was approaching it correctly.
+
+So, let's start with a box plot, which is going to mirror what we learned in lecture. **Note: I just copy and pasted from last night's code, and changed the x and y. Never be afraid to copy and paste if you have plots you like!**
+
+The second bit of code saves the object/plot names "box" as a file called "box_assignment_2.png".
+
+```{boxplot, fig.width = 7, out.width = 8}
+box <- ggplot(data = species_loc_df, aes(x = Quarter, y = Temperature)) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.25, color = "darkgreen") +
+  theme_classic()
+
+#I've tested the above plot and like it, so I'll next save it
+
+ggsave("box_assignment_2.png", box)
+```
+
+So now we now whether it is warmer when it is dry or wet during the year.
+
+We will do one more plot, which is comparing the distribution of those temperature values. We will do this by doing a histogram.
+
+```{histogram, fig.width = 7, out.width = 8}
+hist <- ggplot(data = species_loc_df, aes(x = Temperature, fill = Quarter)) +
+  geom_histogram(alpha = 0.50, position="identity") +
+  theme_classic()
+
+ggsave("hist_assignment_2.png", hist)
+```
+
+### Lesson Goals
+We took the plotting from lecture, and decided to apply it to some temperature data at the occurence locations from last week. We did have to use some new functions and learn some new tricks in R: getData, extract, removing columns with NULL
+
+### Assignment 2
+Similar to last week, I would like you to repeat these steps, but for a species of your choice.
+
+Please turn in a Word document (or similar file type) with:
+1) The name of your species
+2) The histogram and boxplot of two Bioclim variables of your choosing (do not use the same Bioclim 8 and 9 above). Feel free to look at the bonus plot code below if you want to play with making your figure pretty. Although it is focused on the histogram, you can adapt some of it, like changing your axis labels, to your boxplot as well. I'm happy to help you with doing things to any plots, just email me.
+
+### Bonus plot
+Often if you want to tweak something about your plot, you can often find the answer by doing a Google search, such as "ggplot axis labels."
+
+I tried to make that histogram from before a bit nicer by changing the colors of fill ("scale_fill_manual") and giving the names for the legend. I also then changed the y label. Last, I added a base size that is a little larger so the font is easier to see.
+
+```{hist 2, fig.width = 7, out.width = 8}
+hist_2 <- ggplot(data = species_loc_df, aes(x = Temperature, fill = Quarter)) +
+  geom_histogram(alpha = 0.50, position="identity") +
+  scale_fill_manual(values = c("orange", "blue"), labels = c("Driest", "Wettest")) +
+  ylab("Number of GPS Points") +
+  xlab("Temperature (1/10 degree Celsius)") +
+  theme_bw(base_size = 14)
+
+ggsave("hist2_assignment_2.png", hist_2)
+```
+

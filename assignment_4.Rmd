@@ -1,0 +1,206 @@
+---
+title: "assigment_4"
+author: "Travis Seaborn"
+date: "3/3/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Assignment 4: Data Layer Prep
+
+Similar to last week, do not work through this until watching the lecture and following along with that script. The first piece of code below is from the R script attached to the lecture/live coding demo.
+
+The goal is to prepare our present day layers (lecture script) to train and test a model. We will then use that to predict the distribution in a second set of layers (in our case the future).
+
+As always with GIS data, keep in mind some of these steps can take a while and some of the files can be very large. Feel free to start with coarser resolutions to help with file size (e.g. 2.5 minutes).
+
+## Lecture/Live Code Demo Script
+
+Note: there is the one line of code at the end of the lecture script that we didn't get to, where I renamed the layers, and that is below with a comment.
+
+```{r lecture}
+#comments removed for space reasons.
+library(tidyverse)
+library(maptools)
+library(rgbif)
+library(dismo)
+library(corrplot)
+library(caret)
+library(rJava)
+
+projection <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83"
+
+points_clean <- read.csv("points_cleaned.csv")
+
+max(points_clean$decimalLongitude)
+min(points_clean$decimalLongitude)
+max(points_clean$decimalLatitude)
+min(points_clean$decimalLatitude)
+
+ext <- extent(-135, -110, 30, 60)
+
+files <- list.files(path = './env_layers_raw/present_day', pattern = '*.tif', all.files = TRUE, full.names = TRUE)
+
+files
+
+predictors <- stack(files)
+
+predictors$wc2.1_30s_bio_1
+
+plot(predictors)
+
+extracted_vals <- extract(predictors, points_clean[2:3])
+
+extracted_df <- as.data.frame(extracted_vals)
+
+mydata.cor <- cor(extracted_df, method = 'spearman', use = 'complete.obs')
+
+corrplot(mydata.cor)
+
+hc <- findCorrelation(mydata.cor, cutoff = 0.8)
+
+hc = sort(hc)
+
+predictors_final_list = extracted_df[,-c(hc)]
+
+predictors_final <- subset(predictors, names(predictors_final_list))
+
+plot(predictors_final)
+
+bio2_crop <- crop(predictors_final$wc2.1_30s_bio_2, ext)
+
+plot(bio2_crop)
+
+bio3_crop <- crop(predictors_final$wc2.1_30s_bio_3, ext)
+bio7_crop <- crop(predictors_final$wc2.1_30s_bio_7, ext)
+bio8_crop <- crop(predictors_final$wc2.1_30s_bio_8, ext)
+bio9_crop <- crop(predictors_final$wc2.1_30s_bio_9, ext)
+bio10_crop <- crop(predictors_final$wc2.1_30s_bio_10, ext)
+bio14_crop <- crop(predictors_final$wc2.1_30s_bio_14, ext)
+bio15_crop <- crop(predictors_final$wc2.1_30s_bio_15, ext)
+bio19_crop <- crop(predictors_final$wc2.1_30s_bio_19, ext)
+
+bio2_final <- projectRaster(bio2_crop, crs = projection)
+bio3_final <- projectRaster(bio3_crop, crs=projection)
+bio7_final <- projectRaster(bio7_crop, crs=projection)
+bio8_final <- projectRaster(bio8_crop, crs=projection)
+bio9_final <- projectRaster(bio9_crop, crs=projection)
+bio10_final <- projectRaster(bio10_crop, crs=projection)
+bio14_final <- projectRaster(bio14_crop, crs=projection)
+bio15_final <- projectRaster(bio15_crop, crs=projection)
+bio19_final <- projectRaster(bio19_crop, crs=projection)
+
+predictors_maxent <- stack(bio2_final,
+                           bio3_final,
+                           bio7_final,
+                           bio8_final,
+                           bio9_final,
+                           bio10_final,
+                           bio14_final,
+                           bio15_final,
+                           bio19_final)
+
+#rename the layers to be shorter
+predictors_maxent <- setNames(predictors_maxent, c('bio2',
+                                                   'bio3',
+                                                   'bio7',
+                                                   'bio8',
+                                                   'bio9',
+                                                   'bio10',
+                                                   'bio14',
+                                                   'bio15',
+                                                   'bio19'))
+```
+
+## Preparing future climate data
+
+For this assignment, we are going to now prepare the climate data layers for a future time and SSP.
+
+I've downloaded the zip file wc2.1_2.5m_bioc_CanESM5_ssp585_2081-2100 from WorldClim. I chose the bioclim variables ('b') using the CanESM5 GCM and the SSP585 for the years 2081-2100 with a resolution of 2.5 minutes. You can see these bits in the rather long name.
+
+After I downloaded the zip file, I did "unzip here", which made a lot of subfolders. I also noticed that there is only a single file, and not the 19 variables separately. This actually really nice, because the rasters are stacked up for us.
+
+After clicking through using my file explorer, I first load in the layer using the stack option.I did a copy and paste from file explorer to get this very long list of files. Note the direction of the slashes here. If on a Windows machine, sometimes copy and pasting will return the wrong slashes.
+
+```{r pressure}
+future <- stack("./env_layers_raw/share/spatial03/worldclim/cmip6/7_fut/2.5m/CanESM5/ssp585/wc2.1_2.5m_bioc_CanESM5_ssp585_2081-2100.tif")
+```
+
+Next, I am going to set a new extent and crop each individual layer. I've taken the extent above for our present day model and increased it, because I am assuming they are going to inhabit areas not captured in the present day extent. We do not need to check for correlations again, because we are not training/building a new model, we are going to use our existing model to predict across the landscape. Said another way, we are not going to determine the relationships with the environmental variables using the future data.
+
+Although the extent can be shifted, the names of the variables, resolution, crs, and projection must all match.
+
+```{r extent and crop}
+ext <- extent(-140, -100, 25, 90)
+
+bio2_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.2, ext)
+bio3_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.3, ext)
+bio7_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.7, ext)
+bio8_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.8, ext)
+bio9_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.9, ext)
+bio10_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.10, ext)
+bio14_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.14, ext)
+bio15_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.15, ext)
+bio19_crop_future <- crop(future$wc2.1_2.5m_bioc_CanESM5_ssp585_2081.2100.19, ext)
+```
+
+Next we will reproject. Note that I get some warnings related to missing/infinte values, and that is okay.
+
+```{r reproject}
+bio2_final_future <- projectRaster(bio2_crop_future, crs=projection)
+bio3_final_future <- projectRaster(bio3_crop_future, crs=projection)
+bio7_final_future <- projectRaster(bio7_crop_future, crs=projection)
+bio8_final_future <- projectRaster(bio8_crop_future, crs=projection)
+bio9_final_future <- projectRaster(bio9_crop_future, crs=projection)
+bio10_final_future <- projectRaster(bio10_crop_future, crs=projection)
+bio14_final_future <- projectRaster(bio14_crop_future, crs=projection)
+bio15_final_future <- projectRaster(bio15_crop_future, crs=projection)
+bio19_final_future <- projectRaster(bio19_crop_future, crs=projection)
+```
+
+And then we stack them all together, and then rename them within the stack.
+
+I like to stack and then rename, because I don't want to overwrite the existing present day objects. Remember, the names from our present day and future environmental data must match exactly, so what we really need are two versions of the layer "bio2" for example.
+
+```{r name and stack}
+predictors_maxent_future <- stack(bio2_final_future,
+                           bio3_final_future,
+                           bio7_final_future,
+                           bio8_final_future,
+                           bio9_final_future,
+                           bio10_final_future,
+                           bio14_final_future,
+                           bio15_final_future,
+                           bio19_final_future)
+
+predictors_maxent_future <- setNames(predictors_maxent_future, c('bio2',
+                                                   'bio3',
+                                                   'bio7',
+                                                   'bio8',
+                                                   'bio9',
+                                                   'bio10',
+                                                   'bio14',
+                                                   'bio15',
+                                                   'bio19'))
+```
+
+If you want to compare the two maps, we can plot them each:
+
+```{r plots}
+plot(predictors_maxent$bio2)
+
+plot(predictors_maxent_future$bio2)
+```
+
+## Assignment Insructions
+
+For what you turn in, I'd like to see plots for your own species. Please use the bioclim variables and follow along with the scripts above.
+
+To do this, all you need to do is look at your minimum and maximum lat/lon and adjust the "ext" objects for whatever extent is useful for you.
+
+Please turn a plot of one of your layers (e.g. bio2) for present day and in the future, either by uploading a JPEG or exporting and dumping the JPEG into a Word document. Using "plot" in RStudio, the easiest way to save the map is to click the "Export" button on the Files/Plots/Packages/Help/Viewer pane. You can go to previous plots by clicking the arrows on the plots pane.
+
+For the future layer, feel free to pick different GCMs or SSPs. I started with 2081-2100, but you can also pick a different time period. Keep in mind, the further you are projecting, the greater the uncertainty. Because of this, sometimes it is better to pick something a couple decades away (in particular if the goal is some sort of management) in addition to the furthest time point.

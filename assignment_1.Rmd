@@ -1,0 +1,145 @@
+---
+title: "R_Assignment1"
+author: "Travis Seaborn"
+date: "version 1/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction to R
+
+### Loading packages and data
+
+The goal of this assignment is to build off of the lecture demonstration and introduce some of the key aspects of working with data in R. We will cover a lot of funtions, but realize that the goal is not to memorize all of the functions and their arguments. Instead, after watching the lecture material, open this file up and your own RStudio project and follow along. There are a few questions below, which is what you will turn in for credit.
+
+In RStudio, I would create a new project for this course (Click File -> New Project -> New Directory, and then select where you want to keep the files).
+
+To start with, we are going to install the packages that we want to use in this session.
+
+(This is not in a code block because running install.packages while making this html file is a bit glitchy within a code block)
+
+**install.packages(c("tidyverse", "rgbif", "maptools"))**
+
+Like most things we are doing in this assignment, keep in mind the general pattern of "function(arguments)". For example, install.packages is the function, and we give it the arguments for the packages we want to install. To see all of the arguments for a particular function, you can send the code "args(function)" and replace "function" with the name of the package of interest.
+
+After installing, we run the library function to load the packages.
+
+You may get a warning about Rtools. This can be download outside of R if it is causing an error (e.g. https://cran.r-project.org/bin/windows/Rtools/), but if you get a warning but the packages still load, you can continue with this assignment without it. You may need it for future assignments.
+
+**As packages load you might get other red text and warnings. Unless you get errors later in the script, do not worry about the details for now. If you do get errors, please email me.**
+
+```{r packages}
+library(tidyverse)
+library(rgbif)
+library(maptools)
+```
+
+**Look all my warnings! Oh well. It will be fine. Honestly, getting all programs and packages up and working is likely one of the more challenging things we will tackle in R.**
+
+The list of packages you need to install and load will vary with what you want to do in R.
+
+Next, we are going to load in data. In lecture, you saw the function "download.file" and then "read_csv". Here, we are going to directly download and load occupancy points for a species. Note: if you are every feeling lost with what packages to use, often the names are descriptive. Google is your best friend, e.g. "R function download file" or "R load csv" can help point you to what you may need. Often there are multiple packages to do similar things as well.
+
+Below we will work with an example species, Oncorhynchus tshawytscha (Chinook Salmon).
+
+What you see in the code is as follows:
+
+* "species <-" means create a new object called "species" by doing the stuff to the right of the arrow. We made this name up!
+* occ_search means use this function, which will search and download data from gbif.org
+* scientificName = "Oncorhynchus tshawytscha" is the argument where you are setting the species you want to look for
+* country = is the argument to set which country you want to download from (we will explore multiple countries later)
+* limit = is the argument for how many points to download. This can help for testing purposes with species with hundreds of thousands of points
+
+You should not feel worried about memorizing all of these arguments, you will always be coding with your old scripts available (and Google!).
+
+This is actually a list of multiple data frames (including the data we want, metadata, a list of available media). So we are going to do a second step to pull out just the data part of this object
+
+```{r data}
+species <- occ_search(scientificName= "Oncorhynchus tshawytscha", country="US", limit=1000)
+
+species_df <- as.data.frame(species$data)
+```
+
+### Looking and Subsetting Data
+
+Once this finishes, it is time to look at the data. You can click the name of the object under the Global Envirnment window or by running the code View(species). However, this is bit table, so I am going to just show the first 6 rows, using the head function. Tail would show the last 6. You can also view more or less than 6 by setting the arguments. If you have small objects, you can also just send a line of code with just the name of the object. This works well for small tables of summary information, but not for big tables / data frames.
+
+Warning: this is still a huge table...
+
+```{r head}
+head(species_df)
+```
+
+You will notice this is a massive table with a ton of columns that might be useful for some projects. For us, we are just going to focus on the GPS points. We are going to make a new dataframe and point just to the columns of interest.
+
+In this code, keep in mind:
+
+* species_loc is the new object being created by the steps to the right of the arrow
+* species_df is our full data frame, which we then "pipe" (%>%) to the next line (like telling R to take this thing and do the next thing with it)
+* select is a function from tidyverse that will let us select certain columns, in this case to be used for making our new object. The names of our columns in this case are being provided by the data we downloaded.
+
+```{r subset}
+species_loc <- species_df %>%
+  select(species, decimalLatitude, decimalLongitude)
+```
+
+If we view our new objects structure, we will see that the name is of type character. We might actually think of this as category or factor. We can replace the current column with a new column by using the same name. We will use this plus the function factor to turn this column to a factor. I then use the str function to view my column types.
+
+```{r factor}
+species_loc$species <- factor(species_loc$species)
+
+str(species_loc) 
+```
+
+### Doing calculations on data
+
+One thing that might be interesting, is to calculate the average latitude/longitude for our species, and view where in the world that may be. We are going to use the tidyverse summarize function, kind of like how we calculated mean weight in the lecture demo.
+
+Summarize works by creating new columns that you calculate ("mean_lat" and "mean_lon" below). You also have to say how you want to calculate the values of this column. Here we are using the function "mean" with the arguments points to our columns of interest, and telling it remove any missing values.
+
+You will also see group_by below. This is one of my favorite parts of tidyverse, because often we are interested in the differences between groups. We only have one species, but including means that the group (and the column with that information) will be retained in our new object.
+
+Again, don't try to memorize all of this, just try to understand the pieces. I often have to Google functions to see the arguments or find example code. **I copy and paste and manipulate example code all of the time! Do not feel like you need to code from scratch/a blank document.**
+
+```{r calc}
+species_loc_mean <- species_loc %>%
+  summarize(mean_lat = mean(decimalLatitude, na.rm = TRUE), mean_lon = mean(decimalLongitude, na.rm = TRUE))
+
+species_loc_mean
+```
+
+Last, we are going to do a simple plot. We will talk more about making plots (specifically maps) later in the semester. I didn't talk about this in the demo, so if it is not working, do not stress.
+
+First we are going to load some more data. In this case, it is a shapefile with the outline of the world.
+
+We use the function plot.
+The first line info is as follows:
+
+* wrld_simpl is our base map, which is an image of the world included in one of the packages you installed and loaded
+* xlim and ylim is where you want to plot. Feel free to change these numbers to see what happens.
+* axes means we include the x and y values of our map
+
+We then do a second plot, point to our average point:
+
+* add tells R not to do this on a new plot
+* pch is the shape of the plot, cex is size, and col is color. Feel free to change this number and see what happens.
+
+```{r map}
+data(wrld_simpl)
+
+plot(wrld_simpl, xlim=c(-160,-60), ylim=c(25, 60), axes=TRUE)
+points(species_loc_mean$mean_lon, species_loc_mean$mean_lat, pch=16, cex = 1.5, col = "blue")
+
+```
+
+## Assignment
+**I would like you to run through the code, but for a species of your choice that is in the United States. You can do this by changing the name in the occ_search function. Then run, through the code with your species of choice and answer the following questions. Make sure to take note of the Chinook Salmon map location before overwriting all of the objects we created above.**
+
+1) What is the mean latitude and longitude? (10 points)
+
+2) How does this location compare to the Chinook Salmon? (10 points)
+
+If you run into errors or questions, please let me know.

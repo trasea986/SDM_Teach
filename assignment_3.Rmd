@@ -1,0 +1,201 @@
+---
+title: "Assignment 3: Correcting Bias and Background Points"
+author: "Travis Seaborn"
+date: "2/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Starting this Assignment
+
+Note that the following chunk of code comes from the script that we covered in lecture. You will want to work through that, and make sure it is working, before proceeding. I'll be covering correcting for bias and background points in this assignment, so I'm not going to explain the following code chunk from lecture.
+
+This is stiched together from multiple tutorials, so I'll include the original sources under the resources Content Folder on BBLearn.
+
+```{r lecture script}
+library(tidyverse)
+library(rgbif)
+library(sp)
+library(maptools)
+library(dismo)
+library(rnaturalearthdata)
+library(CoordinateCleaner)
+
+occ <- occ_search(scientificName = "Ambystoma macrodactylum", limit = 20000)
+
+df <- occ$data
+
+df_original <- df
+
+world_map <- map_data("world")
+
+map <- ggplot() +
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group), fill = "white", colour = "grey") 
+
+df <- df %>%
+  dplyr::select(species, decimalLongitude, decimalLatitude, countryCode, individualCount, gbifID, family, taxonRank, year, coordinateUncertaintyInMeters, basisOfRecord, institutionCode, datasetName)
+
+unique(df$species)
+
+df <- df %>%
+  filter(!is.na(decimalLongitude)) %>%
+  filter(!is.na(decimalLatitude)) %>%
+  filter(coordinateUncertaintyInMeters < 1000)
+
+df <- df %>%
+  filter(year >= 1970)
+
+df <- df %>%
+  distinct(decimalLongitude, decimalLatitude, .keep_all=TRUE)
+
+flags <- clean_coordinates(x = df,
+                           lon ="decimalLongitude",
+                           lat = "decimalLatitude",
+                           countries = "countryCode",
+                           species = "species",
+                           tests = c("capitals", "centroids", "equal", "gbif", "institutions", "zeros", "seas"))
+
+df <- df[flags$.summary,]
+
+map +
+  geom_point(data = df_original, aes(x = decimalLongitude, y = decimalLatitude), colour = "darkgrey", size = 1.5) +
+  geom_point(data = df, aes(x = decimalLongitude, y = decimalLatitude), colour = "darkblue", size = 1.5) +
+  theme_classic()
+```
+
+## Correcting for bias
+
+One common issue is sampling bias, where points are often occurring in areas that are easy to access (e.g. near universities). We correct for this by turning our data frame from above into a points file, creating a raster grid around those points, and then only sampling once within each grid cell.
+
+Maxent and other software will often only select one point per raster cell, but if you have a fine resolution this may still result in points being spatially correlated.
+
+```{r bias}
+#make a copy of the dataframe from above
+df_cor <- df
+
+#need to specify as spatial points
+coordinates(df_cor) <- ~decimalLongitude+decimalLatitude
+
+#create a raster with the same extent from spatial points file
+r <- raster(df_cor)
+
+# set the resolution of the cells to (for example): 0.5 decimal degrees. You may need a finer or coarser scale depending on your species.
+
+res(r) <- 0.5
+
+# expand (extend the extent) of the RasterLayer a little. We are saying to take this raster, and add one decimal degree to its extent. Again, this will vary with species and how representative you think the point file is.
+
+r <- extend(r, extent(r)+1)
+
+# sample random points
+df1 <- gridSample(df_cor, r, n=1)
+
+#turn the raster to a polygon for plotting
+p <- rasterToPolygons(r)
+
+#plot the polygon. Note: we are not using ggplot here, just to keep this code shorter
+plot(p, border='gray')
+
+#add the points
+points(df_cor)
+
+# compare to the selected points in green
+points(df1, cex=1, col='darkgreen', pch='x')
+
+#now take those sampled points, turn them into a dataframe
+df1 <- as.data.frame(df1)
+
+#this is now our final points. I like to name my final objects as such:
+df_final <- df1
+```
+
+This shows us our points, and the selected ones in green. Empty circles would be points not selected. We don't have too much of an issue here.
+
+## Creating Pseudoabsence Points
+
+It is very difficult to confirm that a species is not in a location. Because of that, using pseudoabsence points (also called random background points) is common with many methods (e.g. Maxent). Maxent does one nice thing though, where you can run it over many iterations and have it re-create the pseudoabsence points. I think it is still worth working through these steps so you understand what these points are, and understand why we need them for our models.
+
+The goal here is to take our points, define their projection, and then draw circles around the points. We can then place the random points within those circles after we "dissolve" them together to create a single polygon.
+
+```{r background}
+projection(df_cor) <- CRS('+proj=longlat +datum=WGS84')
+
+# create circles with a radius of 100 km. This is one of those steps that will really be determined based on the species you are interested in.
+x <- circles(df_cor, d=100000, lonlat=TRUE)
+
+# define the circles as polygons to dissolve. Note: rgeos package is required to dissolve.
+pol <- polygons(x)
+
+#And then we take a random sample of points within the polygons. We only want one point per grid cell.
+
+# sample randomly from the polygon made from the circles
+samp1 <- spsample(pol, 500, type='random')
+
+# get unique cells by using the cellFromXY function to get the cell each point belongs too, and then keep only unique cells 
+cells <- cellFromXY(r, samp1)
+cells <- unique(cells)
+
+#this will tell us how many unique points we ended up with. note that random samply means many points may be in the same raster cell
+length(cells)
+
+xy <- xyFromCell(r, cells)
+
+#Plot to inspect the results:
+plot(pol, axes=TRUE)
+points(xy, cex=0.75, pch=20, col='blue')
+
+#this can now serve as our final background points:
+bg_final <- as.data.frame(xy)
+```
+This map shows the polygone we made by drawing circules around our points, and drawing random points on/around that polygon. There are multiple ways to do this. Instead of circles, we could have also just done a big box.
+
+## Viewing final points
+Now, we have our final points after cleaning, and our final background points. We will make one last map to look at these. I've also added some comments to help with plotting. When using the shapefiles with ggplot, sometimes you will get weird lines if you are cutting out the vertices. Because of this, don't get hung up if you see weird shapes as you zoom in or around on the x and y limits for your plot
+
+One thing you might notice here: some of our random background points drawn from around the circles have ended up in areas we don't want them to. We could either "clean" the background points, or adjust our settings above.
+
+```{r plot}
+occ_map <- map + # create the object by plotting the map and adding...
+  geom_point(data = bg_final, aes(x = x, y = y),
+             colour = "green", size = 1.5)+ # background points, plotted first so they are on the bottom
+  geom_point(data = df_final, aes(x = decimalLongitude, y = decimalLatitude),
+             colour = "darkblue", size = 1.5)+ # final occupancy points
+  xlim(min(df$decimalLongitude)-25, max(df$decimalLongitude)+25) + # setting the min and max of th e map's long
+  ylim(min(df$decimalLatitude)-30, max(df$decimalLatitude)+30) + # and not lat
+  theme_classic(base_size = 16) #apply theme
+
+#save what you have done as a point file and a jpeg
+write.csv(df_final, "points_cleaned.csv")
+
+write.csv(bg_final, "bg_final.csv")
+
+occ_map
+
+#next save that map you just made, with some adjustments to the units to fix some stretching issues.
+
+ggsave("occ_map.png",
+       width = 20, height = 30, units = "cm")
+```
+
+This map shows our cleaned data in blue, and the background points in green. Note that the saved version should look a little less distorted.
+
+## Assignment 3
+
+For this assignment, I would like you to do two things. You can type out your answer in a word document or other file and upload to BBLearn.
+
+1) Run the code from lecture and this assignment, but for a species of your choice. Tell me what species it was, how many original points you downloaded, and how many you ended up with after cleaning things up from above. Last, tell me how many points you dropped.
+
+Make sure to work all the way through the script with this species (even if it is not the one you want to do your project on). This way we can import the csv of the cleaned points later.
+
+2) Coding challenge: One thing we didn't do was manually filter out points outside of the species area (e.g. you notice you have a point in Europe for a North American species). One way to fix this is to manually filter your data frame by setting an acceptable maximum and minimum for longitude or latitude. Please submit the 3 lines of code that you would use to filter so that you only had latitudes greater than -110 and less than -135 are dropped. This would roughly crope to western North America. Take a look at how we filtered by date and the section where we filtered out by missing data. You will get credit for this question as long as you give it your best shot.
+
+I'll help you get started:
+
+df_crop <- df %>%
+
+  ???????(?????) %>%
+  
+  ???????(?????)
